@@ -3,6 +3,7 @@ const router = express.Router()
 const { body, validationResult } = require('express-validator')
 const Web3 = require('web3')
 const config = require('../config')
+const axios = require("axios");
 
 router.get(
     '/get-balances',
@@ -28,21 +29,41 @@ async function getBalances(routeReq, routeRes, next) {
   const validAddresses = [], invalidAddresses = []
   const batch = 50, addresses = body.addresses || []
 
+  let dollarRate = 1
+  try {
+    const res = await axios({
+      method: 'GET',
+      baseURL: 'https://api.coingecko.com',
+      url: 'api/v3/simple/price?ids=ethereum%2C&vs_currencies=usd',
+    }).then(r => r.data)
+
+    dollarRate = res.ethereum.usd
+  } catch (e) {
+    console.log('error', e)
+  }
+
+  console.log('dollarRate', dollarRate)
+
   for (const section of splitToArrays(addresses, batch)) {
-    let retry = true
+    let retry = true, price
     while (retry) {
       try {
         await Promise.all(section.map(address => (async function () {
           let balance = 0
+          let isValid = false
           try {
-            balance = await web3.eth.getBalance(address)
-            balance = web3.utils.fromWei(balance, "ether") / 1
+            if (web3.utils.isAddress(address)) {
+              balance = await web3.eth.getBalance(address)
+              balance = web3.utils.fromWei(balance, "ether") / 1
+              isValid = true
+            }
           } catch (e) {
           }
-          if (balance === 0) {
-            invalidAddresses.push(address)
+          if (isValid) {
+            price = (balance * dollarRate).toFixed(2)
+            validAddresses.push({ address, balance, price })
           } else {
-            validAddresses.push({ address, balance })
+            invalidAddresses.push(address)
           }
         })()))
       } catch (e) { // Handle any other error
